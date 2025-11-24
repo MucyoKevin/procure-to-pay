@@ -180,7 +180,43 @@ SIMPLE_JWT = {
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if not DEBUG else []
+CORS_ALLOWED_ORIGINS = [
+    origin.strip() 
+    for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') 
+    if origin.strip()
+] if not DEBUG else []
+
+# Add common development origins
+if DEBUG:
+    CORS_ALLOWED_ORIGINS.extend([
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://localhost:8080',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:8080',
+    ])
+
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')

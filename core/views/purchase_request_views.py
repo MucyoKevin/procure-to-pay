@@ -2,9 +2,12 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.shortcuts import get_object_or_404
+from django.http import FileResponse, Http404
 from core.models import PurchaseRequest
+from core.filters import PurchaseRequestFilter
 from core.serializers import (
     PurchaseRequestSerializer,
     PurchaseRequestListSerializer,
@@ -47,8 +50,11 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
     queryset = PurchaseRequest.objects.all()
     serializer_class = PurchaseRequestSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'created_by']
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = PurchaseRequestFilter
+    search_fields = ['title', 'description']
+    ordering_fields = ['created_at', 'amount', 'status', 'updated_at']
+    ordering = ['-created_at']  # Default ordering
     
     def get_queryset(self):
         """
@@ -193,7 +199,10 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         # Check if user can approve
         if not ApprovalService.can_user_approve(pr, request.user):
             return Response(
-                {'error': 'You cannot approve this request at this time'},
+                {
+                    'detail': 'You do not have permission to approve this request at this time',
+                    'required_role': 'approver-level-1' if request.user.get_approval_level() == 1 else 'approver-level-2'
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -221,7 +230,7 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             
         except ValueError as e:
             return Response(
-                {'error': str(e)},
+                {'detail': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -249,7 +258,10 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         # Check if user can reject
         if not ApprovalService.can_user_approve(pr, request.user):
             return Response(
-                {'error': 'You cannot reject this request at this time'},
+                {
+                    'detail': 'You do not have permission to reject this request at this time',
+                    'required_role': 'approver-level-1' if request.user.get_approval_level() == 1 else 'approver-level-2'
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -277,7 +289,7 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             
         except ValueError as e:
             return Response(
-                {'error': str(e)},
+                {'detail': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -307,14 +319,17 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         # Check if receipt can be submitted
         if not pr.can_submit_receipt():
             return Response(
-                {'error': 'Receipt cannot be submitted for this request'},
+                {'detail': 'Receipt cannot be submitted for this request. Request must be approved and purchase order must exist.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Check if user is the creator
         if pr.created_by != request.user:
             return Response(
-                {'error': 'You can only submit receipts for your own requests'},
+                {
+                    'detail': 'You can only submit receipts for your own requests',
+                    'required_role': 'staff'
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -355,16 +370,17 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         """
         if request.user.role != 'staff':
             return Response(
-                {'error': 'Only staff users can view their requests'},
+                {
+                    'detail': 'Only staff users can view their requests',
+                    'required_role': 'staff'
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
         
         queryset = PurchaseRequest.objects.filter(created_by=request.user)
         
-        # Apply filters if provided
-        status_filter = request.query_params.get('status')
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
+        # Apply filters using the filter class
+        queryset = self.filter_queryset(queryset)
         
         # Paginate
         page = self.paginate_queryset(queryset)
@@ -389,6 +405,9 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         Get all purchase requests pending approval at the user's level.
         """
         queryset = ApprovalService.get_pending_approvals_for_user(request.user)
+        
+        # Apply filters
+        queryset = self.filter_queryset(queryset)
         
         # Paginate
         page = self.paginate_queryset(queryset)
@@ -416,6 +435,9 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             status=PurchaseRequest.Status.APPROVED
         )
         
+        # Apply filters
+        queryset = self.filter_queryset(queryset)
+        
         # Paginate
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -431,6 +453,123 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             many=True,
             context={'request': request}
         )
+        return Response(serializer.data)
+    
+    @swagger_auto_schema(
+        method='get',
+        responses={
+            200: 'File download',
+            404: 'Not Found'
+        }
+    )
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def download_po(self, request, pk=None):
+        """
+        Download the purchase order PDF for an approved request.
+        """
+        pr = self.get_object()
+        
+        if not pr.purchase_order:
+            return Response(
+                {'detail': 'Purchase order not available for this request'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            return FileResponse(
+                pr.purchase_order.open('rb'),
+                content_type='application/pdf',
+                filename=pr.purchase_order.name.split('/')[-1]
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error downloading file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @swagger_auto_schema(
+        method='get',
+        responses={
+            200: 'File download',
+            404: 'Not Found'
+        }
+    )
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def download_proforma(self, request, pk=None):
+        """
+        Download the proforma invoice for a request.
+        """
+        pr = self.get_object()
+        
+        if not pr.proforma:
+            return Response(
+                {'detail': 'Proforma invoice not available for this request'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            return FileResponse(
+                pr.proforma.open('rb'),
+                content_type='application/pdf',
+                filename=pr.proforma.name.split('/')[-1]
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error downloading file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @swagger_auto_schema(
+        method='get',
+        responses={
+            200: 'File download',
+            404: 'Not Found'
+        }
+    )
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def download_receipt(self, request, pk=None):
+        """
+        Download the receipt for a request.
+        """
+        pr = self.get_object()
+        
+        if not pr.receipt:
+            return Response(
+                {'detail': 'Receipt not available for this request'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            return FileResponse(
+                pr.receipt.open('rb'),
+                content_type='application/pdf',
+                filename=pr.receipt.name.split('/')[-1]
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error downloading file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @swagger_auto_schema(
+        method='get',
+        responses={
+            200: 'Approval history',
+            404: 'Not Found'
+        }
+    )
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def approval_history(self, request, pk=None):
+        """
+        Get approval history for a purchase request.
+        Returns just the approvals array.
+        """
+        pr = self.get_object()
+        
+        from core.serializers import ApprovalSerializer
+        
+        approvals = pr.approvals.all().order_by('level')
+        serializer = ApprovalSerializer(approvals, many=True)
         return Response(serializer.data)
 
 
