@@ -42,8 +42,9 @@ COPY . .
 # Create media and static directories
 RUN mkdir -p /app/media /app/staticfiles
 
-# Collect static files
-RUN python manage.py collectstatic --noinput || true
+# Copy and set permissions for startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Expose port
 EXPOSE 8000
@@ -52,8 +53,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/api/schema/ || exit 1
 
-# Default command
-CMD ["gunicorn", "procure.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
+# Use startup script that runs migrations before starting server
+CMD ["/app/start.sh"]
 
 
 
