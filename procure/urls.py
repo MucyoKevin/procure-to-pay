@@ -23,7 +23,7 @@ from rest_framework_simplejwt.views import (
 )
 from core.serializers import CustomTokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView as BaseTokenObtainPairView
-from core.views import current_user
+from core.views import current_user, register_user
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
@@ -63,6 +63,7 @@ urlpatterns = [
     path('api/v1/', include('core.urls')),
     
     # Authentication
+    path('api/auth/register/', register_user, name='register_user'),
     path('api/auth/token/', BaseTokenObtainPairView.as_view(serializer_class=CustomTokenObtainPairSerializer), name='token_obtain_pair'),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/user/', current_user, name='current_user'),

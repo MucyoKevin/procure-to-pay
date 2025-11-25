@@ -10,7 +10,8 @@ from .purchase_request_serializer import (
 )
 from .auth_serializer import (
     CustomTokenObtainPairSerializer,
-    UserSerializer
+    UserSerializer,
+    UserRegistrationSerializer
 )
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     'ReceiptUploadSerializer',
     'UserBasicSerializer',
     'CustomTokenObtainPairSerializer',
-    'UserSerializer'
+    'UserSerializer',
+    'UserRegistrationSerializer'
 ]
 
