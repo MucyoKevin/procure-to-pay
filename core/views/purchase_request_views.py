@@ -78,10 +78,17 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         # Approvers see requests pending at their level
         elif user.is_approver():
             # For approve/reject actions, show all pending requests (permissions will handle access control)
-            if self.action in ['approve', 'reject', 'retrieve']:
+            if self.action in ['approve', 'reject']:
                 return PurchaseRequest.objects.filter(
                     status=PurchaseRequest.Status.PENDING
                 )
+            
+            # For retrieve and detail actions, show requests they can view (pending, or ones they've reviewed)
+            if self.action in ['retrieve', 'approval_history', 'download_po', 'download_proforma', 'download_receipt']:
+                level = user.get_approval_level()
+                return PurchaseRequest.objects.filter(
+                    approvals__level=level
+                ).distinct()
             
             # For list actions, filter by approval level
             level = user.get_approval_level()
